@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "mazeforge"
 version = "1.0.0"
 authors = [
-    { name="Fireboy086", email="your.email@example.com" }
+    { name="Fireboy086", email="volodymyr.renskyi@icloud.com" }
 ]
 description = "A flexible maze generation library with multiple algorithms and output formats"
 readme = "README.md"
@@ -21,5 +21,5 @@ dependencies = [
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/Fireboy086/mazeforge"
-"Bug Tracker" = "https://github.com/Fireboy086/mazeforge/issues" 
+"Homepage" = "https://github.com/Fireboy086/MazeForge"
+"Bug Tracker" = "https://github.com/Fireboy086/MazeForge/issues" 
