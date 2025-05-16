@@ -7,9 +7,12 @@ def generate_maze(
     name: str = "GeneratedMaze",
     algorithm: Literal["simple", "growing_tree", "braided"] = "growing_tree",
     algorithm_settings: dict = None,
-    mode: Literal["list", "image"] = "list",
-    image_settings: dict = None
-) -> Union[List[List[str]], Image.Image]:
+    mode: Literal["list", "image", "distances", "dict"] = "list",
+    image_settings: dict = None,
+    seed: int = None,
+    start_wall: Literal["N", "S", "E", "W", "Any"] = "Any",
+    end_wall: Literal["N", "S", "E", "W", "Any"] = "Any"
+) -> Union[List[List[str]], Image.Image, List[List[Union[dict, str]]]]:
     """
     Generate a maze with all available settings
     
@@ -33,7 +36,9 @@ def generate_maze(
             }
         mode: Output mode (default: "list")
             - "list": Returns maze as nested list
+            - "dict": Returns maze as nested list with cell dictionaries
             - "image": Returns PIL Image object
+            - "distances": Returns maze with distances from start
         image_settings: Dict with image settings:
             {
                 'mode': '1' or 'RGB' (default: 'RGB'),
@@ -41,6 +46,18 @@ def generate_maze(
                 'floor_color': color value (default: 'White'),
                 'pixel_size': int (default: 10)
             }
+        start_wall: Which wall to place start point on (default: "Any")
+            - "N": North wall
+            - "S": South wall
+            - "E": East wall
+            - "W": West wall
+            - "Any": Random wall
+        end_wall: Which wall to place end point on (default: "Any")
+            - "N": North wall
+            - "S": South wall
+            - "E": East wall
+            - "W": West wall
+            - "Any": Random wall
     
     Returns:
         List[List[str]] if mode="list": 
@@ -48,27 +65,23 @@ def generate_maze(
             ' ' = path
             'S' = start
             'E' = end
+        List[List[Union[dict, str]]] if mode="dict":
+            '#' = wall
+            dict = {
+                "distance": steps from start (-1 if unreachable),
+                "index": str (' ' for path, '#' for wall, 'S' for start, 'E' for end),
+                "N": bool (has north connection),
+                "S": bool (has south connection),
+                "W": bool (has west connection),
+                "E": bool (has east connection)
+            }
+        List[List[Union[str, int]]] if mode="distances":
+            '#' = wall
+            int = steps from start
+            'E' = end
         PIL.Image if mode="image"
-    
-    Example:
-        >>> # Simple list maze
-        >>> maze = generate_maze(10, 10)
-        >>> 
-        >>> # Colored image maze with loops
-        >>> maze_img = generate_maze(
-        ...     width=20, 
-        ...     height=20,
-        ...     algorithm="braided",
-        ...     algorithm_settings={'weight_braid': 30},
-        ...     mode="image",
-        ...     image_settings={
-        ...         'wall_color': 'Yellow',
-        ...         'floor_color': 'Red'
-        ...     }
-        ... )
     """
     from .Maze import Maze
-    
     # Default settings
     default_algo_settings = {
         'weight_high': 99,
@@ -89,7 +102,9 @@ def generate_maze(
         default_image_settings.update(image_settings)
     
     # Create maze
-    maze = Maze(width, height, mazeName=name)
+    maze = Maze(width, height, mazeName=name, seed=seed)
+    maze.start_wall = start_wall
+    maze.end_wall = end_wall
     
     # Apply selected algorithm
     if algorithm == "simple":
@@ -109,6 +124,10 @@ def generate_maze(
     # Return based on mode
     if mode == 'list':
         return maze.get_maze_as_list()
+    elif mode == 'dict':
+        return maze.get_maze_detailed_info()
+    elif mode == 'distances':
+        return maze.get_maze_with_distances()
     else:
         image = maze.makePP(
             mode=default_image_settings['mode'],

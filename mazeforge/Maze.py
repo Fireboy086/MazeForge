@@ -3,10 +3,13 @@
     Modified by Fireboy086
     Dependend on Pillow 4.2, a fork of PIL (https://pillow.readthedocs.io/en/4.2.x/index.html)
 """
+import time
 from PIL import Image,ImageDraw, ImageColor
 import random as rnd
 import re
-from typing import List, Tuple, Union, Optional
+from typing import List, Tuple, Union, Optional, Literal
+
+from mazeforge import maze_generator
 
 class Maze:
     """ This Class represents a Maze. After init it consists of an unformed maze made out of a nested list (grid) of 
@@ -39,7 +42,9 @@ class Maze:
             private function    __connectTiles(tileA,tileB): connects specified tiles to make a way
             private function    __connectTilesWithString(tile,string): connects two tiles dependend on one tile and a given connection string.
             private function    __calculate_distance(self, start_pos, end_pos): Calculate shortest path distance between two points using BFS
-            private function    __makeEntryandExit(): creates a entry and an exit into the maze
+            private function    __find_all_paths(self): Find all possible paths between outer wall tiles and calculate their lengths
+            private function    __makeEntryandExit(): Creates entry and exit points based on path analysis or specified walls
+            private function    __makeEntryandExitOnWalls(): Original method for placing entry/exit on specific walls
             
             public function     makeMazeSimple:():  returns True
                                                     This function takes the unformed maze and forms it with the modified Prim's
@@ -64,7 +69,18 @@ class Maze:
             public function     saveImage(image,string): Specialized implementation of Pillow's Save function. Takes an image and
                                                                 saves it with an (optional) given name/path object and format. 
                                                                 If no name is given, a name will be constructed.
-    """
+            public function     get_maze_with_distances(self) -> List[List[Union[str, int]]]:
+                                                                Returns the maze as a nested list where:
+                                                                '#' represents walls
+                                                                numbers represent steps needed to reach that cell from start
+                                                                'E' represents end
+            public function     get_maze_detailed_info(self) -> List[List[dict]]:
+                                                                Returns the maze as a nested list of dictionaries containing detailed cell information.
+                                                                Each cell dictionary contains:
+                                                                    - distance: Steps from start (0 for start, -1 for unreachable)
+                                                                    - index: Cell type ('S' for start, 'E' for end, ' ' for path, '#' for wall)
+                                                                    - N, S, W, E: Boolean indicating if the cell connects in that direction
+            """
 
     class __MazeTile:
         """ This subclass is a structure representing a single tile inside the Maze. This tile has a X and Y coordinate which are specified on generation.
@@ -98,6 +114,7 @@ class Maze:
                 2               Out of bounds of list
                 3               A maze algorithm tried to change a already changed maze
                 4               A function that assumed a formed maze found an unformed maze
+                5               Could not find start position
         """
         def __init__(self, string, errorcode):
             self.string = string
@@ -109,7 +126,7 @@ class Maze:
     
     
     
-    def __init__(self, dimensionX, dimensionY,mazeName = "A_Maze"):
+    def __init__(self, dimensionX, dimensionY,mazeName = "A_Maze",seed = None):
         """Generator for the Maze class.
            It takes two integer to decide the size of the maze (X and Y). It also takes an optional string to determine the name of the maze.
         
@@ -141,7 +158,14 @@ class Maze:
         
         self.mazeString = ""        #A string describing the Maze in a pseudo graphical manner, gets generated everytime __str__() gets called
         
+        # Wall selection for entry/exit points
+        self.start_wall: Literal["N", "S", "E", "W", "Any"] = "Any"
+        self.end_wall: Literal["N", "S", "E", "W", "Any"] = "Any"
         
+        if seed is not None:
+            rnd.seed(seed)
+        else:
+            rnd.seed(int(time.time() * 1000))
         
         
     def __str__(self): 
@@ -326,47 +350,73 @@ class Maze:
         
         return 0  # No path found
 
-    def __makeEntryandExit(self):
-        """Creates random entry and exit points on any outer wall of the maze with minimum distance."""
-        
-        # Get all outer wall tiles
+    def __find_all_paths(self):
+        """Find all possible paths between outer wall tiles and calculate their lengths"""
         outer_tiles = []
         
-        # Add top and bottom row tiles
-        outer_tiles.extend([(x, 0) for x in range(self.sizeX)])  # Top wall
-        outer_tiles.extend([(x, self.sizeY-1) for x in range(self.sizeX)])  # Bottom wall
-        
-        # Add left and right column tiles (excluding corners to avoid duplicates)
-        outer_tiles.extend([(0, y) for y in range(1, self.sizeY-1)])  # Left wall
-        outer_tiles.extend([(self.sizeX-1, y) for y in range(1, self.sizeY-1)])  # Right wall
-        
-        # Calculate minimum required distance (30% of total path tiles)
-        total_tiles = self.sizeX * self.sizeY
-        min_distance = int(total_tiles * 0.3)
-        
-        max_attempts = 50  # Prevent infinite loop
-        attempts = 0
-        best_distance = 0
-        best_positions = None
-        
-        while attempts < max_attempts:
-            # Pick two different positions for entry and exit
-            entry_pos, exit_pos = rnd.sample(outer_tiles, 2)
+        # Get all outer wall tiles
+        for x in range(self.sizeX):
+            outer_tiles.append((x, 0))  # Top
+            outer_tiles.append((x, self.sizeY-1))  # Bottom
+        for y in range(1, self.sizeY-1):
+            outer_tiles.append((0, y))  # Left
+            outer_tiles.append((self.sizeX-1, y))  # Right
             
-            # Calculate actual path distance
-            distance = self.__calculate_distance(entry_pos, exit_pos)
+        paths = []
+        # Try all combinations of outer tiles
+        for start in outer_tiles:
+            for end in outer_tiles:
+                if start != end:
+                    dist = self.__calculate_distance(start, end)
+                    if dist > 0:  # Only add if path exists
+                        paths.append({
+                            'start': start,
+                            'end': end,
+                            'length': dist
+                        })
+        
+        # Sort by length
+        paths.sort(key=lambda x: x['length'])
+        
+        if not paths:
+            return None
             
-            if distance >= min_distance:
-                best_positions = (entry_pos, exit_pos)
+        return {
+            'shortest': paths[0],
+            'longest': paths[-1],
+            'medium': paths[len(paths)//2]
+        }
+
+    def __makeEntryandExit(self):
+        """Creates entry and exit points on specified walls of the maze"""
+        def get_wall_tiles(wall: str) -> List[Tuple[int, int]]:
+            """Helper function to get tiles for a specific wall"""
+            if wall == "N":
+                return [(x, 0) for x in range(self.sizeX)]
+            elif wall == "S":
+                return [(x, self.sizeY-1) for x in range(self.sizeX)]
+            elif wall == "W":
+                return [(0, y) for y in range(self.sizeY)]
+            elif wall == "E":
+                return [(self.sizeX-1, y) for y in range(self.sizeY)]
+            else:  # "Any"
+                return (
+                    [(x, 0) for x in range(self.sizeX)] +  # Top wall
+                    [(x, self.sizeY-1) for x in range(self.sizeX)] +  # Bottom wall
+                    [(0, y) for y in range(1, self.sizeY-1)] +  # Left wall
+                    [(self.sizeX-1, y) for y in range(1, self.sizeY-1)]  # Right wall
+                )
+        
+        # Get available tiles for start and end based on specified walls
+        start_tiles = get_wall_tiles(self.start_wall)
+        end_tiles = get_wall_tiles(self.end_wall)
+        
+        # Pick random positions that aren't the same
+        while True:
+            entry_pos = rnd.choice(start_tiles)
+            exit_pos = rnd.choice(end_tiles)
+            if entry_pos != exit_pos:
                 break
-            elif distance > best_distance:
-                best_distance = distance
-                best_positions = (entry_pos, exit_pos)
-                
-            attempts += 1
-            
-        # Use the best positions found
-        entry_pos, exit_pos = best_positions
         
         # Set entry point
         entry_tile = self.mazeList[entry_pos[1]][entry_pos[0]]
@@ -390,6 +440,80 @@ class Maze:
         elif exit_pos[0] == 0:  # Left wall
             exit_tile.connectTo.append("W")
         else:  # Right wall
+            exit_tile.connectTo.append("E")
+            
+        return True
+
+    def __makeEntryandExitOnWalls(self):
+        """Original method for placing entry/exit on specific walls"""
+        def get_wall_tiles(wall: str) -> List[Tuple[int, int]]:
+            if wall == "N":
+                return [(x, 0) for x in range(self.sizeX)]
+            elif wall == "S":
+                return [(x, self.sizeY-1) for x in range(self.sizeX)]
+            elif wall == "W":
+                return [(0, y) for y in range(self.sizeY)]
+            elif wall == "E":
+                return [(self.sizeX-1, y) for y in range(self.sizeY)]
+            else:  # "Any"
+                return (
+                    [(x, 0) for x in range(self.sizeX)] +  # Top wall
+                    [(x, self.sizeY-1) for x in range(self.sizeX)] +  # Bottom wall
+                    [(0, y) for y in range(1, self.sizeY-1)] +  # Left wall
+                    [(self.sizeX-1, y) for y in range(1, self.sizeY-1)]  # Right wall
+                )
+        
+        start_tiles = get_wall_tiles(self.start_wall)
+        end_tiles = get_wall_tiles(self.end_wall)
+        
+        total_tiles = self.sizeX * self.sizeY
+        min_distance = int(total_tiles * self.min_distance_ratio)
+        
+        max_attempts = 50
+        attempts = 0
+        best_distance = 0
+        best_positions = None
+        
+        while attempts < max_attempts:
+            entry_pos = rnd.choice(start_tiles)
+            exit_pos = rnd.choice(end_tiles)
+            
+            if entry_pos == exit_pos:
+                continue
+            
+            distance = self.__calculate_distance(entry_pos, exit_pos)
+            
+            if distance >= min_distance:
+                best_positions = (entry_pos, exit_pos)
+                break
+            elif distance > best_distance:
+                best_distance = distance
+                best_positions = (entry_pos, exit_pos)
+                
+            attempts += 1
+            
+        entry_pos, exit_pos = best_positions
+        
+        entry_tile = self.mazeList[entry_pos[1]][entry_pos[0]]
+        entry_tile.is_entry = True
+        if entry_pos[1] == 0:
+            entry_tile.connectTo.append("N")
+        elif entry_pos[1] == self.sizeY-1:
+            entry_tile.connectTo.append("S")
+        elif entry_pos[0] == 0:
+            entry_tile.connectTo.append("W")
+        else:
+            entry_tile.connectTo.append("E")
+            
+        exit_tile = self.mazeList[exit_pos[1]][exit_pos[0]]
+        exit_tile.is_entry = False
+        if exit_pos[1] == 0:
+            exit_tile.connectTo.append("N")
+        elif exit_pos[1] == self.sizeY-1:
+            exit_tile.connectTo.append("S")
+        elif exit_pos[0] == 0:
+            exit_tile.connectTo.append("W")
+        else:
             exit_tile.connectTo.append("E")
             
         return True
@@ -792,6 +916,211 @@ class Maze:
                     
         return maze_list
 
+    def get_maze_with_distances(self) -> List[List[Union[str, int]]]:
+        """Returns the maze as a nested list where:
+        '#' represents walls
+        numbers represent steps needed to reach that cell from start
+        'E' represents end
+        """
+        if not self.__mazeIsDone:
+            raise self.__MazeError("Maze needs to be formed first", 4)
+            
+        # Create a list with walls and fill in paths
+        maze_list = [['#' for _ in range(self.sizeX * 2 + 1)] for _ in range(self.sizeY * 2 + 1)]
+        
+        # Fill in paths and find start position
+        start_pos = None
+        for row in self.mazeList:
+            for tile in row:
+                x = (tile.coordinateX + 1) * 2 - 1
+                y = (tile.coordinateY + 1) * 2 - 1
+                maze_list[y][x] = ' '
+                
+                # Mark entry/exit points and paths
+                for direction in tile.connectTo:
+                    dx, dy = 0, 0
+                    if direction == "N": dy = -1
+                    elif direction == "S": dy = 1
+                    elif direction == "W": dx = -1
+                    elif direction == "E": dx = 1
+                    
+                    # If this tile is entry/exit and connects to border
+                    if tile.is_entry is not None and (y + dy == 0 or y + dy == len(maze_list)-1 or 
+                                                    x + dx == 0 or x + dx == len(maze_list[0])-1):
+                        if tile.is_entry:
+                            start_pos = (x + dx, y + dy)
+                            maze_list[y + dy][x + dx] = 'S'
+                        else:
+                            maze_list[y + dy][x + dx] = 'E'
+                    else:
+                        maze_list[y + dy][x + dx] = ' '
+        
+        if not start_pos:
+            raise self.__MazeError("Could not find start position", 5)
+            
+        # BFS to calculate distances
+        distances = {}  # (x, y) -> distance
+        queue = [(start_pos, 0)]  # (position, distance)
+        visited = {start_pos}
+        
+        while queue:
+            (x, y), dist = queue.pop(0)
+            distances[(x, y)] = dist
+            
+            # Check all connected tiles
+            for y_offset, x_offset in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                new_x, new_y = x + x_offset, y + y_offset
+                if (0 <= new_x < len(maze_list[0]) and 
+                    0 <= new_y < len(maze_list) and 
+                    maze_list[new_y][new_x] == ' ' and 
+                    (new_x, new_y) not in visited):
+                    visited.add((new_x, new_y))
+                    queue.append(((new_x, new_y), dist + 1))
+        
+        # Fill in distances
+        for y, row in enumerate(maze_list):
+            for x, cell in enumerate(row):
+                if (x, y) in distances:
+                    maze_list[y][x] = distances[(x, y)]
+                elif cell != '#' and cell != 'E':
+                    maze_list[y][x] = -1  # Unreachable cells
+                
+        return maze_list
+
+    def get_maze_detailed_info(self) -> List[List[dict]]:
+        """Returns the maze as a nested list of dictionaries containing detailed cell information.
+        The grid dimensions are (sizeY * 2 + 1) x (sizeX * 2 + 1).
+        Each cell dictionary currently contains:
+            - index: Cell type ('S' for start, 'E' for end, ' ' for path, '#' for wall)
+            - distance: Steps from start (0 for start, positive for reachable, -1 for unreachable path, None for wall)
+            - N, S, W, E: Boolean indicating if a path is connected in that direction.
+        """
+        if not self.__mazeIsDone:
+            raise self.__MazeError("Maze needs to be formed first", 4)
+
+        detailed_maze_grid = [
+            [{'index': '#', 'distance': None, 'N': False, 'S': False, 'W': False, 'E': False} for _ in range(self.sizeX * 2 + 1)]
+            for _ in range(self.sizeY * 2 + 1)
+        ]
+
+        start_pos_on_grid = None
+
+        # Populate 'index' for paths, 'S' (start), and 'E' (end)
+        for row_tiles in self.mazeList:
+            for tile in row_tiles:
+                center_x_lg = (tile.coordinateX + 1) * 2 - 1
+                center_y_lg = (tile.coordinateY + 1) * 2 - 1
+                detailed_maze_grid[center_y_lg][center_x_lg]['index'] = ' '
+
+                for direction in tile.connectTo:
+                    conn_dx_lg, conn_dy_lg = 0, 0
+                    if direction == "N": conn_dy_lg = -1
+                    elif direction == "S": conn_dy_lg = 1
+                    elif direction == "W": conn_dx_lg = -1
+                    elif direction == "E": conn_dx_lg = 1
+                    
+                    path_conn_x_lg = center_x_lg + conn_dx_lg
+                    path_conn_y_lg = center_y_lg + conn_dy_lg
+
+                    # Ensure we are within grid bounds for path connections.
+                    # For S/E, this connection defines the S/E cell itself.
+                    if not (0 <= path_conn_x_lg < self.sizeX * 2 + 1 and \
+                            0 <= path_conn_y_lg < self.sizeY * 2 + 1):
+                        # This should not happen for valid internal connections
+                        # but entry/exit logic relies on these "outgoing" connections from tiles.
+                        # For example, a tile at (0,0) with 'N' connection for entry implies
+                        # path_conn_y_lg will be 0.
+                        continue
+
+
+                    is_border_cell_for_entry_exit = False
+                    if tile.is_entry is not None:
+                        if direction == "N" and tile.coordinateY == 0: is_border_cell_for_entry_exit = True
+                        elif direction == "S" and tile.coordinateY == self.sizeY - 1: is_border_cell_for_entry_exit = True
+                        elif direction == "W" and tile.coordinateX == 0: is_border_cell_for_entry_exit = True
+                        elif direction == "E" and tile.coordinateX == self.sizeX - 1: is_border_cell_for_entry_exit = True
+                    
+                    if is_border_cell_for_entry_exit:
+                        if tile.is_entry is True:
+                            detailed_maze_grid[path_conn_y_lg][path_conn_x_lg]['index'] = 'S'
+                            if start_pos_on_grid is None:
+                                start_pos_on_grid = (path_conn_x_lg, path_conn_y_lg)
+                        else: # tile.is_entry is False
+                            detailed_maze_grid[path_conn_y_lg][path_conn_x_lg]['index'] = 'E'
+                    # Only mark as path if not already S or E
+                    elif detailed_maze_grid[path_conn_y_lg][path_conn_x_lg]['index'] == '#':
+                         detailed_maze_grid[path_conn_y_lg][path_conn_x_lg]['index'] = ' '
+        
+        if not start_pos_on_grid:
+             # Fallback: scan grid for 'S' if not found via tile logic (should be rare)
+            for r in range(len(detailed_maze_grid)):
+                for c in range(len(detailed_maze_grid[0])):
+                    if detailed_maze_grid[r][c]['index'] == 'S':
+                        start_pos_on_grid = (c, r)
+                        break
+                if start_pos_on_grid:
+                    break
+            if not start_pos_on_grid:
+                raise self.__MazeError("Could not find start position for detailed info", 5)
+
+        # BFS to calculate distances
+        bfs_distances = {} 
+        queue = [(start_pos_on_grid, 0)]
+        visited_bfs = {start_pos_on_grid}
+        
+        if start_pos_on_grid: # The start position itself has distance 0
+             bfs_distances[start_pos_on_grid] = 0
+
+        while queue:
+            (curr_x, curr_y), dist = queue.pop(0)
+            # bfs_distances[(curr_x, curr_y)] = dist # Already set for start, or will be set now
+
+            for y_offset, x_offset in [(-1, 0), (1, 0), (0, -1), (0, 1)]: # N, S, W, E
+                next_x, next_y = curr_x + x_offset, curr_y + y_offset
+
+                if (0 <= next_x < len(detailed_maze_grid[0]) and
+                    0 <= next_y < len(detailed_maze_grid) and
+                    (detailed_maze_grid[next_y][next_x]['index'] == ' ' or detailed_maze_grid[next_y][next_x]['index'] == 'E') and
+                    (next_x, next_y) not in visited_bfs):
+                    visited_bfs.add((next_x, next_y))
+                    bfs_distances[(next_x, next_y)] = dist + 1
+                    queue.append(((next_x, next_y), dist + 1))
+        
+        # Fill in distances and N,S,W,E connection info into the detailed_maze_grid
+        grid_rows = len(detailed_maze_grid)
+        grid_cols = len(detailed_maze_grid[0])
+        path_indices = (' ', 'S', 'E')
+
+        for r_idx in range(grid_rows):
+            for c_idx in range(grid_cols):
+                cell_dict = detailed_maze_grid[r_idx][c_idx]
+                pos = (c_idx, r_idx)
+
+                # Distance population
+                if pos in bfs_distances:
+                    cell_dict['distance'] = bfs_distances[pos]
+                elif cell_dict['index'] == ' ' : # Path cell not reached by BFS
+                    cell_dict['distance'] = -1
+                # 'S' should be in bfs_distances (dist 0)
+                # 'E' will get distance if reachable, else distance remains None (or -1 if it was marked ' ' and unreachable)
+                # '#' will have distance None (from initialization)
+
+                # N,S,W,E connection population
+                # Check North
+                if r_idx > 0 and detailed_maze_grid[r_idx-1][c_idx]['index'] in path_indices:
+                    cell_dict['N'] = True
+                # Check South
+                if r_idx < grid_rows - 1 and detailed_maze_grid[r_idx+1][c_idx]['index'] in path_indices:
+                    cell_dict['S'] = True
+                # Check West
+                if c_idx > 0 and detailed_maze_grid[r_idx][c_idx-1]['index'] in path_indices:
+                    cell_dict['W'] = True
+                # Check East
+                if c_idx < grid_cols - 1 and detailed_maze_grid[r_idx][c_idx+1]['index'] in path_indices:
+                    cell_dict['E'] = True
+                
+        return detailed_maze_grid
+
 if __name__ == "__main__":
     #Examples:
     #newMaze = Maze(10,10)
@@ -817,4 +1146,9 @@ if __name__ == "__main__":
     # maze_list = newMaze.get_maze_as_list()
     # for row in maze_list:
     #     print(''.join(row))
+    
+    mazelist = maze_generator.generate_maze(2, 2, mode="dict")
+
+    for row in mazelist:
+        print(row)
     pass

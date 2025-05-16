@@ -47,7 +47,7 @@ pip-delete-this-directory.txt
 
 # OS
 .DS_Store
-Thumbs.db
+Thumbs.db 
 *.bak
 *.tmp
 *~ 
