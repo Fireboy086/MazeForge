@@ -26,11 +26,11 @@ def generate_maze(
             - "braided": Uses Growing Tree + braiding for loops
         algorithm_settings: Dict with algorithm settings:
             growing_tree: {
-                'weight_high': 0-100 (default 99),
-                'weight_low': 0-100 (default 97)
+                'weighHigh': 0-100 (default 99),
+                'weightLow': 0-100 (default 97)
             }
             braided: {
-                'weight_braid': -1 to 100 (default -1)
+                'weightBraid': -1 to 100 (default -1)
                     -1: removes all dead ends
                     0-100: percentage chance of creating loops
             }
@@ -84,9 +84,9 @@ def generate_maze(
     from .Maze import Maze
     # Default settings
     default_algo_settings = {
-        'weight_high': 99,
-        'weight_low': 97,
-        'weight_braid': -1
+        'weighHigh': 99,
+        'weightLow': 97,
+        'weightBraid': -1
     }
     
     default_image_settings = {
@@ -111,15 +111,15 @@ def generate_maze(
         maze.makeMazeSimple()
     elif algorithm == "growing_tree":
         maze.makeMazeGrowTree(
-            weightHigh=default_algo_settings['weight_high'],
-            weightLow=default_algo_settings['weight_low']
+            weightHigh=default_algo_settings['weighHigh'],
+            weightLow=default_algo_settings['weightLow']
         )
     elif algorithm == "braided":
         maze.makeMazeGrowTree(
-            weightHigh=default_algo_settings['weight_high'],
-            weightLow=default_algo_settings['weight_low']
+            weightHigh=default_algo_settings['weighHigh'],
+            weightLow=default_algo_settings['weightLow']
         )
-        maze.makeMazeBraided(default_algo_settings['weight_braid'])
+        maze.makeMazeBraided(default_algo_settings['weightBraid'])
     
     # Return based on mode
     if mode == 'list':
